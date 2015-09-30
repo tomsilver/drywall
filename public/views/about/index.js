@@ -25,15 +25,23 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     this.waitingForAnswers = false;
     this.waitingForQuestions = false;
     this.cID = null;
-    this.gameState = -1;
+    this.gameState = 0;
+
+    this.addChatMessage(gameStateMessages[this.gameState]);
   };
 
   Competitor.prototype.setConversation = function (convID) {
     this.cID = convID;
+    this.advanceGameState();
+  };
+
+  Competitor.prototype.addChatMessage = function() {
+    return false;
   };
 
   Competitor.prototype.advanceGameState = function() {
     this.gameState += 1;
+    this.addChatMessage(gameStateMessages[this.gameState]);
   };
 
   Competitor.prototype.handleInput = function(newMessage) {
@@ -108,25 +116,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
-  var HumanCompetitor = function (myID) {
-    Competitor.call( this, myID );
-  };
-
-  HumanCompetitor.prototype = Object.create( Competitor.prototype );
-  HumanCompetitor.prototype.constructor = HumanCompetitor;
-
-
-  HumanCompetitor.prototype.advanceGameState = function() {
-    this.gameState += 1;
-    this.addChatMessage(gameStateMessages[this.gameState]);
-  };
-
-  HumanCompetitor.prototype.addChatMessage = function(data) {
-    $('<div/>', { text: data }).appendTo('#chatBox');
-    $("#chatBox").animate({ scrollTop: $('#chatBox')[0].scrollHeight}, 500);
-  };
-
-  HumanCompetitor.prototype.askQuestion = function(question) {
+  Competitor.prototype.askQuestion = function(question) {
     var numQ = this.questionsAsking.length;
     if (numQ < totalQuestions) {
       if (question) {
@@ -140,12 +130,12 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
-  HumanCompetitor.prototype.presentQuestions = function() {
+  Competitor.prototype.presentQuestions = function() {
     this.advanceGameState();
     this.presentNextQuestion();
   };
 
-  HumanCompetitor.prototype.presentNextQuestion = function() {
+  Competitor.prototype.presentNextQuestion = function() {
     if (this.questionsReceived.length) {
       var nextQuestion = this.questionsReceived.shift();
       var idx = totalQuestions - this.questionsReceived.length;
@@ -153,7 +143,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
-  HumanCompetitor.prototype.answerLastQuestion = function(answer) {
+  Competitor.prototype.answerLastQuestion = function(answer) {
     var numA = this.answersGiving.length;
     if (numA < totalQuestions) {
       if (answer) {
@@ -167,8 +157,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
-  HumanCompetitor.prototype.presentAnswers = function() {
-    console.log("checkpoint 2");
+  Competitor.prototype.presentAnswers = function() {
     var me = this;
     if (this.answersReceived.length) {
       $.each(this.answersReceived, function(i, obj) {
@@ -179,6 +168,18 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
+  var HumanCompetitor = function (myID) {
+    Competitor.call( this, myID );
+  };
+
+  HumanCompetitor.prototype = Object.create( Competitor.prototype );
+  HumanCompetitor.prototype.constructor = HumanCompetitor;
+
+  HumanCompetitor.prototype.addChatMessage = function(data) {
+    $('<div/>', { text: data }).appendTo('#chatBox');
+    $("#chatBox").animate({ scrollTop: $('#chatBox')[0].scrollHeight}, 500);
+  };
+
 
   socket = io.connect();
   socket.on('connect', function() {
@@ -186,13 +187,11 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
   });
   socket.on('/about/#idset', function(myID) {
     competitor = new HumanCompetitor(myID);
-    competitor.advanceGameState();
     socket.emit('/about/#matchrequest', myID);
   });
   socket.on('/about/#matchset', function(convID) {
     competitor.setConversation(convID);
     console.log("joined conversation "+convID.toString());
-    competitor.advanceGameState();
   });
   socket.on('/about/#receiveQuestions', function(jsonQuestions) {
     competitor.receiveQuestions(jsonQuestions);
