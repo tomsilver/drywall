@@ -1,16 +1,8 @@
 /* global app:true, io:false */
 
 var socket;
-var cID = null;
+var competitor;
 var totalQuestions = 5;
-var questionsAsking = [];
-var answersGiving = [];
-var answersReceived = [];
-var questionsReceived = [];
-var questionsReceived;
-var waitingForAnswers = false;
-var waitingForQuestions = false;
-var gameState = -1;
 var gameStateMessages = ["Waiting to find a competitor...", "Game started. Please ask your competitor "+totalQuestions.toString()+" questions:", "Waiting for competitor's questions...", "Please answer your competitor's questions:", "Waiting for your competitor's answers...", "Please enter how many questions your competitor answered correctly:"];
 
 // game states:
@@ -24,123 +16,189 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
 (function() {
   'use strict';
 
-  var advanceGameState = function() {
-    gameState += 1;
-    addChatMessage(gameStateMessages[gameState]);
+  var Competitor = function(myID) {
+    this.myID = myID;
+    this.questionsAsking = [];
+    this.answersGiving = [];
+    this.answersReceived = [];
+    this.questionsReceived = [];
+    this.waitingForAnswers = false;
+    this.waitingForQuestions = false;
+    this.cID = null;
+    this.gameState = -1;
   };
 
-  var addChatMessage = function(data) {
+  Competitor.prototype.setConversation = function (convID) {
+    this.cID = convID;
+  };
+
+  Competitor.prototype.advanceGameState = function() {
+    this.gameState += 1;
+  };
+
+  Competitor.prototype.handleInput = function(newMessage) {
+    // waiting for competitor
+    if (this.gameState === 0) {
+      return false;
+    }
+    // asking questions
+    else if (this.gameState === 1) {
+      this.askQuestion(newMessage);
+    }
+    // waiting for comp questions
+    else if (this.gameState === 2) {
+      return false;
+    }
+    // answering questions
+    else if (this.gameState === 3) {
+      this.answerLastQuestion(newMessage);
+      this.presentNextQuestion();
+    }
+    // waiting for comp answers
+    else if (this.gameState === 4) {
+      return false;
+    }
+    // scoring comp answers
+    else if (this.gameState === 5) {
+      // TODO
+      return false;
+    }
+  };
+
+  Competitor.prototype.sendQuestions = function(jsonQuestions) {
+    socket.emit('/about/#sendquestions', jsonQuestions);
+
+    this.advanceGameState();
+
+    if (this.questionsReceived.length === 0) {
+      this.waitingForQuestions = true;
+    }
+    else {
+      this.presentQuestions();
+    }
+  };
+
+  Competitor.prototype.sendAnswers = function(jsonAnswers) {
+    socket.emit('/about/#sendanswers', jsonAnswers);
+
+    this.advanceGameState();
+
+    if (this.answersReceived.length === 0) {
+      this.waitingForAnswers = true;
+    }
+    else {
+      this.presentAnswers();
+    }
+  };
+
+  Competitor.prototype.receiveQuestions = function(jsonQuestions) {
+    var qJson = JSON.parse(jsonQuestions);
+    this.questionsReceived = qJson.questions;
+    if (this.waitingForQuestions) {
+      // will need to fix!!!
+      this.presentQuestions();
+    }
+  };
+
+  Competitor.prototype.receiveAnswers = function(jsonAnswers) {
+    var aJson = JSON.parse(jsonAnswers);
+    this.answersReceived = aJson.answers;
+    if (this.waitingForAnswers) {
+      this.presentAnswers();
+    }
+  };
+
+  var HumanCompetitor = function (myID) {
+    Competitor.call( this, myID );
+  };
+
+  HumanCompetitor.prototype = Object.create( Competitor.prototype );
+  HumanCompetitor.prototype.constructor = HumanCompetitor;
+
+
+  HumanCompetitor.prototype.advanceGameState = function() {
+    this.gameState += 1;
+    this.addChatMessage(gameStateMessages[this.gameState]);
+  };
+
+  HumanCompetitor.prototype.addChatMessage = function(data) {
     $('<div/>', { text: data }).appendTo('#chatBox');
     $("#chatBox").animate({ scrollTop: $('#chatBox')[0].scrollHeight}, 500);
   };
 
-  var askQuestion = function(question) {
-    var numQ = questionsAsking.length;
+  HumanCompetitor.prototype.askQuestion = function(question) {
+    var numQ = this.questionsAsking.length;
     if (numQ < totalQuestions) {
       if (question) {
-        addChatMessage('My Question '+(numQ+1).toString()+' : '+ question);
-        questionsAsking.push(question);
+        this.addChatMessage('My Question '+(numQ+1).toString()+' : '+ question);
+        this.questionsAsking.push(question);
       }
     }
-    if (questionsAsking.length === totalQuestions) {
-      var jsonQuestions = JSON.stringify({'userID': socket.visitor, 'conversationID': cID, 'questions': questionsAsking});
-      sendQuestions(jsonQuestions);
+    if (this.questionsAsking.length === totalQuestions) {
+      var jsonQuestions = JSON.stringify({'userID': this.myID, 'conversationID': this.cID, 'questions': this.questionsAsking});
+      this.sendQuestions(jsonQuestions);
     }
   };
 
-  var sendQuestions = function(jsonQuestions) {
-    socket.emit('/about/#sendquestions', jsonQuestions);
-
-    advanceGameState();
-
-    if (questionsReceived.length === 0) {
-      waitingForQuestions = true;
-    }
-    else {
-      presentQuestions();
-    }
+  HumanCompetitor.prototype.presentQuestions = function() {
+    this.advanceGameState();
+    this.presentNextQuestion();
   };
 
-  var presentQuestions = function() {
-    advanceGameState();
-    presentNextQuestion();
-  };
-
-  var presentNextQuestion = function() {
-    if (questionsReceived.length) {
-      var nextQuestion = questionsReceived.shift();
-      var idx = totalQuestions - questionsReceived.length;
-      addChatMessage("Competitor Question "+idx.toString()+": "+nextQuestion);
+  HumanCompetitor.prototype.presentNextQuestion = function() {
+    if (this.questionsReceived.length) {
+      var nextQuestion = this.questionsReceived.shift();
+      var idx = totalQuestions - this.questionsReceived.length;
+      this.addChatMessage("Competitor Question "+idx.toString()+": "+nextQuestion);
     }
   };
 
-  var answerLastQuestion = function(answer) {
-    var numA = answersGiving.length;
+  HumanCompetitor.prototype.answerLastQuestion = function(answer) {
+    var numA = this.answersGiving.length;
     if (numA < totalQuestions) {
       if (answer) {
-        addChatMessage('My Answer '+(numA+1).toString()+' : '+ answer);
-        answersGiving.push(answer);
+        this.addChatMessage('My Answer '+(numA+1).toString()+' : '+ answer);
+        this.answersGiving.push(answer);
       }
     }
-    if (answersGiving.length === totalQuestions) {
-      var jsonAnswers = JSON.stringify({'userID': socket.visitor, 'conversationID': cID, 'answers': answersGiving});
-      sendAnswers(jsonAnswers);
+    if (this.answersGiving.length === totalQuestions) {
+      var jsonAnswers = JSON.stringify({'userID': this.myID, 'conversationID': this.cID, 'answers': this.answersGiving});
+      this.sendAnswers(jsonAnswers);
     }
   };
 
-  var sendAnswers = function(jsonAnswers) {
-    socket.emit('/about/#sendanswers', jsonAnswers);
-
-    advanceGameState();
-
-    if (answersReceived.length === 0) {
-      waitingForAnswers = true;
-    }
-    else {
-      presentAnswers();
-    }
-  };
-
-  var presentAnswers = function() {
-    if (answersReceived.length) {
-      $.each(answersReceived, function(i, obj) {
-        addChatMessage("Question: "+questionsAsking[i]);
-        addChatMessage("Competitor Answer: "+obj);
+  HumanCompetitor.prototype.presentAnswers = function() {
+    console.log("checkpoint 2");
+    var me = this;
+    if (this.answersReceived.length) {
+      $.each(this.answersReceived, function(i, obj) {
+        me.addChatMessage("Question: "+me.questionsAsking[i]);
+        me.addChatMessage("Competitor Answer: "+obj);
       });
-      advanceGameState();
+      this.advanceGameState();
     }
   };
+
 
   socket = io.connect();
   socket.on('connect', function() {
     socket.emit('/about/#join');
-    advanceGameState();
   });
   socket.on('/about/#idset', function(myID) {
-    socket.visitor = myID;
-    socket.emit('/about/#matchrequest', socket.visitor);
-  });
-  socket.on('/about/#incoming', function(visitor, message) {
-    addChatMessage(visitor +': '+ message);
+    competitor = new HumanCompetitor(myID);
+    competitor.advanceGameState();
+    socket.emit('/about/#matchrequest', myID);
   });
   socket.on('/about/#matchset', function(convID) {
-    cID = convID;
+    competitor.setConversation(convID);
     console.log("joined conversation "+convID.toString());
-    advanceGameState();
+    competitor.advanceGameState();
   });
   socket.on('/about/#receiveQuestions', function(jsonQuestions) {
-    var qJson = JSON.parse(jsonQuestions);
-    questionsReceived = qJson.questions;
-    if (waitingForQuestions) {
-      presentQuestions();
-    }
+    competitor.receiveQuestions(jsonQuestions);
   });
   socket.on('/about/#receiveAnswers', function(jsonAnswers) {
-    var aJson = JSON.parse(jsonAnswers);
-    answersReceived = aJson.answers;
-    if (waitingForAnswers) {
-      presentAnswers();
-    }
+    competitor.receiveAnswers(jsonAnswers);
   });
 
   app = app || {};
@@ -164,32 +222,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     formSubmit: function() {
       var newMessage = this.$el.find('[name="message"]').val();
       this.$el.find('[name="message"]').val('');
-      // waiting for competitor
-      if (gameState === 0) {
-        return false;
-      }
-      // asking questions
-      else if (gameState === 1) {
-        askQuestion(newMessage);
-      }
-      // waiting for comp questions
-      else if (gameState === 2) {
-        return false;
-      }
-      // answering questions
-      else if (gameState === 3) {
-        answerLastQuestion(newMessage);
-        presentNextQuestion();
-      }
-      // waiting for comp answers
-      else if (gameState === 4) {
-        return false;
-      }
-      // scoring comp answers
-      else if (gameState === 5) {
-        // TODO
-        return false;
-      }
+      competitor.handleInput(newMessage);
     }
   });
 
