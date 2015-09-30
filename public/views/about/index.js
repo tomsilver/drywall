@@ -2,8 +2,10 @@
 
 var socket;
 var competitor;
+var machine;
 var totalQuestions = 5;
-var gameStateMessages = ["Waiting to find a competitor...", "Game started. Please ask your competitor "+totalQuestions.toString()+" questions:", "Waiting for competitor's questions...", "Please answer your competitor's questions:", "Waiting for your competitor's answers...", "Please enter how many questions your competitor answered correctly:"];
+var gameStateMessages = ["Waiting for competitor...", "Game started. Please ask your competitor "+totalQuestions.toString()+" questions:", "Waiting for competitor's questions...", "Please answer your competitor's questions:", "Waiting for your competitor's answers...", "Please enter how many questions your competitor answered correctly:"];
+var vsMachine = false;
 
 // game states:
 // 0: waiting for competitor
@@ -26,13 +28,13 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     this.waitingForQuestions = false;
     this.cID = null;
     this.gameState = 0;
-
-    this.addChatMessage(gameStateMessages[this.gameState]);
   };
 
   Competitor.prototype.setConversation = function (convID) {
-    this.cID = convID;
-    this.advanceGameState();
+    if (this.cID === null) {
+      this.cID = convID;
+      this.advanceGameState();
+    }
   };
 
   Competitor.prototype.addChatMessage = function() {
@@ -41,7 +43,6 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
 
   Competitor.prototype.advanceGameState = function() {
     this.gameState += 1;
-    this.addChatMessage(gameStateMessages[this.gameState]);
   };
 
   Competitor.prototype.handleInput = function(newMessage) {
@@ -75,13 +76,17 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
 
   Competitor.prototype.sendQuestions = function(jsonQuestions) {
     socket.emit('/about/#sendquestions', jsonQuestions);
+    console.log("Sending questions...");
+    console.log(this.myID);
 
     this.advanceGameState();
 
     if (this.questionsReceived.length === 0) {
+      console.log("waiting for questions...");
       this.waitingForQuestions = true;
     }
     else {
+      console.log("this is happening...");
       this.presentQuestions();
     }
   };
@@ -93,6 +98,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
 
     if (this.answersReceived.length === 0) {
       this.waitingForAnswers = true;
+      console.log("waiting for answers");
     }
     else {
       this.presentAnswers();
@@ -101,18 +107,22 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
 
   Competitor.prototype.receiveQuestions = function(jsonQuestions) {
     var qJson = JSON.parse(jsonQuestions);
-    this.questionsReceived = qJson.questions;
-    if (this.waitingForQuestions) {
-      // will need to fix!!!
-      this.presentQuestions();
+    if (qJson.userID !== this.myID) {
+      this.questionsReceived = qJson.questions;
+      if (this.waitingForQuestions) {
+        console.log("I was waiting!");
+        this.presentQuestions();
+      }
     }
   };
 
   Competitor.prototype.receiveAnswers = function(jsonAnswers) {
     var aJson = JSON.parse(jsonAnswers);
-    this.answersReceived = aJson.answers;
-    if (this.waitingForAnswers) {
-      this.presentAnswers();
+    if (aJson.userID !== this.myID) {
+      this.answersReceived = aJson.answers;
+      if (this.waitingForAnswers) {
+        this.presentAnswers();
+      }
     }
   };
 
@@ -168,6 +178,7 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     }
   };
 
+  // Human competitor
   var HumanCompetitor = function (myID) {
     Competitor.call( this, myID );
   };
@@ -180,24 +191,78 @@ var gameStateMessages = ["Waiting to find a competitor...", "Game started. Pleas
     $("#chatBox").animate({ scrollTop: $('#chatBox')[0].scrollHeight}, 500);
   };
 
+  HumanCompetitor.prototype.advanceGameState = function() {
+    this.gameState += 1;
+    this.addChatMessage(gameStateMessages[this.gameState]);
+  };
 
+  // Machine competitor
+  var MachineCompetitor = function (myID) {
+    Competitor.call( this, myID );
+    this.questionsAsking = ['fake question 1', 'fake question 2', 'fake question 3', 'fake question 4', 'fake question 5'];
+  };
+
+  MachineCompetitor.prototype = Object.create( Competitor.prototype );
+  MachineCompetitor.prototype.constructor = MachineCompetitor;
+
+  MachineCompetitor.prototype.setConversation = function (convID) {
+    if (this.cID === null) {
+      this.cID = convID;
+      this.advanceGameState();
+      var jsonQuestions = JSON.stringify({'userID': this.myID, 'conversationID': this.cID, 'questions': this.questionsAsking});
+      this.sendQuestions(jsonQuestions);
+    }
+  };
+
+  MachineCompetitor.prototype.addChatMessage = function(data) {
+    // feed in data as input to machine
+    console.log("sending data to cleverbot: "+data);
+    socket.emit('/about/#getCleverbotResponse', data);
+  };
+
+  // Talk to server
   socket = io.connect();
   socket.on('connect', function() {
-    socket.emit('/about/#join');
+    if (vsMachine) {
+      socket.emit('/about/#initmachine');
+    }
+    else {
+      socket.emit('/about/#inithuman');
+    }
   });
-  socket.on('/about/#idset', function(myID) {
-    competitor = new HumanCompetitor(myID);
-    socket.emit('/about/#matchrequest', myID);
+  socket.on('/about/#idset', function(humanID, machineID) {
+    competitor = new HumanCompetitor(humanID);
+    competitor.addChatMessage("Waiting for competitor...");
+    if (machineID) {
+      machine = new MachineCompetitor(machineID);
+      console.log("machine "+machineID.toString()+" initialized");
+      socket.emit('/about/#localmatch', humanID, machineID);
+    }
+    else {
+      socket.emit('/about/#matchrequest', humanID);
+    }
   });
   socket.on('/about/#matchset', function(convID) {
     competitor.setConversation(convID);
+    if (vsMachine) {
+      machine.setConversation(convID);
+    }
     console.log("joined conversation "+convID.toString());
   });
   socket.on('/about/#receiveQuestions', function(jsonQuestions) {
     competitor.receiveQuestions(jsonQuestions);
+    if (vsMachine) {
+      machine.receiveQuestions(jsonQuestions);
+    }
   });
   socket.on('/about/#receiveAnswers', function(jsonAnswers) {
     competitor.receiveAnswers(jsonAnswers);
+    if (vsMachine) {
+      machine.receiveAnswers(jsonAnswers);
+    }
+  });
+  socket.on('/about/#cbotresponse', function(response) {
+    machine.handleInput(response);
   });
 
   app = app || {};

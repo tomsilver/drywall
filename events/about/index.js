@@ -5,6 +5,9 @@ var unmatchedCompetitors = [];
 var clients = {};
 var socketIDMap = {};
 var conversations = {};
+var nextMachineID = 0;
+var Cleverbot = require('cleverbot');
+var cBot = new Cleverbot;
 
 var Conversation = function (firstComp, secondComp, convID) {
   this.firstComp = firstComp;
@@ -19,13 +22,13 @@ var Conversation = function (firstComp, secondComp, convID) {
 Conversation.prototype.askQuestions = function(askerID, questions) {
   if (askerID == this.firstComp) {
     this.firstQuestions = questions;
-    var jsonQuestions = JSON.stringify({'questions': questions});
+    var jsonQuestions = JSON.stringify({'questions': questions, 'userID': askerID});
     var receiver = clients[this.secondComp];
     receiver.emit('/about/#receiveQuestions', jsonQuestions);
   }
   else {
     this.secondQuestions = questions;
-    var jsonQuestions = JSON.stringify({'questions': questions});
+    var jsonQuestions = JSON.stringify({'questions': questions, 'userID': askerID});
     var receiver = clients[this.firstComp];
     receiver.emit('/about/#receiveQuestions', jsonQuestions);
   }
@@ -34,20 +37,20 @@ Conversation.prototype.askQuestions = function(askerID, questions) {
 Conversation.prototype.answerQuestions = function(answerID, answers) {
   if (answerID == this.firstComp) {
     this.firstAnswers = answers;
-    var jsonAnswers = JSON.stringify({'answers': answers});
+    var jsonAnswers = JSON.stringify({'answers': answers, 'userID': answerID});
     var receiver = clients[this.secondComp];
     receiver.emit('/about/#receiveAnswers', jsonAnswers);
   }
   else {
     this.secondAnswers = answers;
-    var jsonAnswers = JSON.stringify({'answers': answers});
+    var jsonAnswers = JSON.stringify({'answers': answers, 'userID': answerID});
     var receiver = clients[this.firstComp];
     receiver.emit('/about/#receiveAnswers', jsonAnswers);
   }
 };
 
 
-exports.join = function(app, socket){
+exports.inithuman = function(app, socket){
   return function() {
     socket.visitor = 'guest';
     if (socket.request.user) {
@@ -55,9 +58,25 @@ exports.join = function(app, socket){
     }
     socket.join('/about/');
     clients[socket.visitor] = socket;
-    socket.emit('/about/#idset', socket.visitor);
+    socket.emit('/about/#idset', socket.visitor, false);
   };
 };
+
+exports.initmachine = function(app, socket){
+  return function() {
+    socket.visitor = 'guest';
+    if (socket.request.user) {
+      socket.visitor = socket.request.user.username;
+    }
+    socket.join('/about/');
+    clients[socket.visitor] = socket;
+
+    var machineID = nextMachineID;
+    nextMachineID += 1;
+    clients[machineID] = socket;
+    socket.emit('/about/#idset', socket.visitor, machineID);
+  };
+}
 
 exports.matchrequest = function(app, socket){
   return function(myID) {
@@ -72,6 +91,15 @@ exports.matchrequest = function(app, socket){
       socket.emit('/about/#matchset', conversation.convID);
       clients[comp].emit('/about/#matchset', conversation.convID);
     }
+  };
+};
+
+exports.localmatch = function(app, socket){
+  return function(humanID, machineID) {
+    var conversation = new Conversation(humanID, machineID, nextConvID);
+    conversations[nextConvID] = conversation;
+    nextConvID += 1;
+    socket.emit('/about/#matchset', conversation.convID);
   };
 };
 
@@ -93,5 +121,17 @@ exports.sendanswers = function(app, socket){
     conv.answerQuestions(jsonAnswers['userID'], jsonAnswers['answers']);
   };
 };
+
+exports.getCleverbotResponse = function(app, socket){
+  return function(msg) {
+    console.log("msg: "+msg);
+    Cleverbot.prepare(function(){
+      cBot.write(msg, function (response) {
+        console.log("got response "+response.message);
+        socket.emit('/about/#cbotresponse', response.message);
+      });
+    });
+  }
+}
 
 
