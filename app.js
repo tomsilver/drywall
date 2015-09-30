@@ -3,7 +3,7 @@
 //dependencies
 var config = require('./config'),
     express = require('express'),
-    cookieParser = require('cookie-parser'),
+    cookieParser = require('cookie-parser'),  
     bodyParser = require('body-parser'),
     session = require('express-session'),
     mongoStore = require('connect-mongo')(session),
@@ -17,11 +17,14 @@ var config = require('./config'),
 //create express app
 var app = express();
 
-//keep reference to config
-app.config = config;
-
 //setup the web server
 app.server = http.createServer(app);
+
+//setup socket.io
+app.io = require('socket.io').listen(app.server);
+
+//keep reference to config
+app.config = config;
 
 //setup mongoose
 app.db = mongoose.createConnection(config.mongodb.uri);
@@ -40,6 +43,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'jade');
 
 //middleware
+app.sessionStore = new mongoStore({ url: config.mongodb.uri });
 app.use(require('morgan')('dev'));
 app.use(require('compression')());
 app.use(require('serve-static')(path.join(__dirname, 'public')));
@@ -51,7 +55,7 @@ app.use(session({
   resave: true,
   saveUninitialized: true,
   secret: config.cryptoKey,
-  store: new mongoStore({ url: config.mongodb.uri })
+  store: app.sessionStore
 }));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -73,11 +77,14 @@ app.locals.copyrightYear = new Date().getFullYear();
 app.locals.copyrightName = app.config.companyName;
 app.locals.cacheBreaker = 'br34k-01';
 
-//setup passport
-require('./passport')(app, passport);
+//config passport
+require('./passport')(app, passport, express, cookieParser, config);
 
-//setup routes
+//route requests
 require('./routes')(app, passport);
+
+//route sockets
+require('./sockets')(app);
 
 //custom (friendly) error handler
 app.use(require('./views/http/index').http500);
